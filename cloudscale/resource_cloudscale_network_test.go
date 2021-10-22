@@ -325,6 +325,49 @@ func TestAccCloudscaleNetwork_ServerWithPublicAndPrivateWithoutAddress(t *testin
 	})
 }
 
+func TestAccCloudscaleSubnet_ServerReorderNetworks(t *testing.T) {
+	count := 2
+	_ = make([]cloudscale.Network, count, count)
+	var server cloudscale.Server
+
+	rInt1 := acctest.RandInt()
+	rInt2 := acctest.RandInt()
+
+	resource.ParallelTest(t, resource.TestCase{
+		PreCheck:     func() { testAccPreCheck(t) },
+		Providers:    testAccProviders,
+		CheckDestroy: testAccCheckCloudscaleNetworkDestroy,
+		Steps: []resource.TestStep{
+			{
+				Config: twoNetworkConfig(rInt1, rInt2, 0, 1),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckCloudscaleServerExists("cloudscale_server.web-worker01", &server),
+					resource.TestCheckResourceAttr("cloudscale_server.web-worker01", "interfaces.#", "2"),
+					resource.TestCheckResourceAttr("cloudscale_server.web-worker01", "interfaces.0.type", "private"),
+					resource.TestCheckResourceAttr("cloudscale_server.web-worker01", "interfaces.0.network_name", fmt.Sprintf("terraform-%d-0", rInt1)),
+					resource.TestCheckResourceAttr("cloudscale_server.web-worker01", "interfaces.0.addresses.#", "1"),
+					resource.TestCheckResourceAttr("cloudscale_server.web-worker01", "interfaces.1.type", "private"),
+					resource.TestCheckResourceAttr("cloudscale_server.web-worker01", "interfaces.1.network_name", fmt.Sprintf("terraform-%d-1", rInt1)),
+					resource.TestCheckResourceAttr("cloudscale_server.web-worker01", "interfaces.1.addresses.#", "1"),
+				),
+			},
+			{
+				Config: twoNetworkConfig(rInt1, rInt2, 1, 0),
+				Check: resource.ComposeTestCheckFunc(
+					testAccCheckCloudscaleServerExists("cloudscale_server.web-worker01", &server),
+					resource.TestCheckResourceAttr("cloudscale_server.web-worker01", "interfaces.#", "2"),
+					resource.TestCheckResourceAttr("cloudscale_server.web-worker01", "interfaces.0.type", "private"),
+					resource.TestCheckResourceAttr("cloudscale_server.web-worker01", "interfaces.0.network_name", fmt.Sprintf("terraform-%d-1", rInt1)),
+					resource.TestCheckResourceAttr("cloudscale_server.web-worker01", "interfaces.0.addresses.#", "1"),
+					resource.TestCheckResourceAttr("cloudscale_server.web-worker01", "interfaces.1.type", "private"),
+					resource.TestCheckResourceAttr("cloudscale_server.web-worker01", "interfaces.1.network_name", fmt.Sprintf("terraform-%d-0", rInt1)),
+					resource.TestCheckResourceAttr("cloudscale_server.web-worker01", "interfaces.1.addresses.#", "1"),
+				),
+			},
+		},
+	})
+}
+
 func testAccCheckCloudscaleNetworkSubnetCount(n string, network *cloudscale.Network, expectedCount int) resource.TestCheckFunc {
 	return func(s *terraform.State) error {
 		if actualSubnetCount := len(network.Subnets); actualSubnetCount != expectedCount {
@@ -504,4 +547,33 @@ resource "cloudscale_server" "basic" {
   ssh_keys 					= ["ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBFEepRNW5hDct4AdJ8oYsb4lNP5E9XY5fnz3ZvgNCEv7m48+bhUjJXUPuamWix3zigp2lgJHC6SChI/okJ41GUY=", "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBFEepRNW5hDct4AdJ8oYsb4lNP5E9XY5fnz3ZvgNCEv7m48+bhUjJXUPuamWix3zigp2lgJHC6SChI/okJ41GUY="]
 }`
 	return fmt.Sprintf(template, rInt, DefaultImageSlug)
+}
+
+func twoNetworkConfig(rInt1 int, rInt2 int, networkIndex1 int, networkIndex2 int) string {
+	template := `
+resource "cloudscale_network" "multi-net" {
+  count = 2
+  name = "terraform-%d-${count.index}"
+  auto_create_ipv4_subnet = true
+}
+
+resource "cloudscale_server" "web-worker01" {
+ name = "terraform-%d"
+ flavor_slug = "flex-4"
+ image_slug = "debian-9"
+ volume_size_gb = 50
+ interfaces {
+   type         = "private"
+   network_uuid = cloudscale_network.multi-net[%d].id
+ }
+ interfaces {
+   type         = "private"
+   network_uuid = cloudscale_network.multi-net[%d].id
+ }
+ ssh_keys = [
+   "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIL2jzgla23DfRVLQr3KT20QQYovqCCN3clHrjm2ZuQFW user@example.com"
+ ]
+}`
+
+	return fmt.Sprintf(template, rInt1, rInt2, networkIndex1, networkIndex2)
 }
